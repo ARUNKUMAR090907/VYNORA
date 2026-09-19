@@ -1,4 +1,4 @@
-# Government Schemes Platform - MERN Stack
+# VYNORA   - MERN Stack
 
 A comprehensive MERN (MongoDB, Express, React, Node.js) platform that helps citizens discover and apply for government schemes. The platform provides personalized eligibility checks based on user profiles and includes an AI copilot for guidance.
 

@@ -1,11 +1,8 @@
-import dns from 'dns';
-
-dns.setServers(['8.8.8.8', '1.1.1.1']);
-
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import helmet from 'helmet';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -19,27 +16,47 @@ import schemeRoutes from './routes/schemeRoutes.js';
 import eligibilityRoutes from './routes/eligibilityRoutes.js';
 import copilotRoutes from './routes/copilotRoutes.js';
 
+// Import seeder
+import { seedDatabase, seedDemoUser } from './scripts/seedSchemes.js';
+import Scheme from './models/Scheme.js';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 
-// Middleware
+// Security & Middlewares
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
+
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:5173',
-  credentials: true
+  credentials: true,
 }));
-app.use(express.json());
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+app.use(express.json({ limit: '20mb' }));
+app.use(express.urlencoded({ limit: '20mb', extended: true }));
 
 // Database Connection
 const connectDB = async () => {
   try {
-    const uri = process.env.MONGO_URI || 'mongodb://localhost:27017/govt-schemes';
+    const uri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/govt-schemes';
     await mongoose.connect(uri);
-    console.log('✅ MongoDB connected successfully');
+    console.log('✅ MongoDB connected successfully to:', uri.split('@').pop() || uri);
+
+    // Auto-seed schemes if database is empty
+    const count = await Scheme.countDocuments();
+    if (count === 0) {
+      console.log('Database schemes empty. Auto-seeding 50+ verified schemes...');
+      await seedDatabase();
+    }
+
+    // Auto-seed demo citizen for instant preview
+    await seedDemoUser();
   } catch (error) {
-    console.warn('⚠️ MongoDB connection warning (running in self-contained mode):', error.message);
+    console.warn('⚠️ MongoDB connection warning (falling back to memory data layer):', error.message);
   }
 };
 
@@ -55,23 +72,38 @@ app.use('/api/copilot', copilotRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.status(200).json({ status: 'Server is running ✅' });
+  res.status(200).json({
+    status: 'healthy',
+    platform: 'VYNORA Citizen Welfare Intelligence Platform',
+    timestamp: new Date().toISOString(),
+  });
 });
 
-// Error handling middleware
+// Centralized 404 handler for API routes
+app.use('/api/*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    code: 'ROUTE_NOT_FOUND',
+    message: `API route ${req.originalUrl} not found.`,
+  });
+});
+
+// Centralized error handling middleware
 app.use((err, req, res, next) => {
-  console.error('Error:', err);
-  res.status(err.status || 500).json({
-    error: err.message || 'Internal Server Error',
-    status: err.status || 500
+  console.error('Unhandled Server Error:', err);
+  const status = err.status || 500;
+  res.status(status).json({
+    success: false,
+    code: err.code || 'INTERNAL_SERVER_ERROR',
+    message: err.message || 'An internal error occurred. Please try again.',
   });
 });
 
 // Start server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running at http://localhost:${PORT}`);
-  console.log(`📚 API Documentation: http://localhost:${PORT}/api`);
+  console.log(`🚀 VYNORA API Server running at http://localhost:${PORT}`);
+  console.log(`📡 Health Check: http://localhost:${PORT}/api/health`);
 });
 
 export default app;

@@ -1,59 +1,72 @@
-import { generateSovereignResponse } from '../geminiAdvisor.js';
+import { generateCopilotResponse } from '../services/aiProvider.js';
+import User from '../models/User.js';
 
 export const askCopilot = async (req, res) => {
   try {
-    const { message, profile, targetLanguage, mode } = req.body;
+    const { message, profile, targetLanguage, activeSchemeSlug, history, mode } = req.body;
 
-    if (!message) {
-      return res.status(400).json({ error: 'Message is required' });
+    if (!message || typeof message !== 'string' || !message.trim()) {
+      return res.status(400).json({
+        success: false,
+        code: 'MISSING_MESSAGE',
+        message: 'Message query is required.',
+      });
     }
 
-    const responseText = generateSovereignResponse(
-      message,
-      profile || req.user || {},
-      targetLanguage || 'Tamil',
-      mode || 'detailed'
-    );
+    // If request has authenticated user, merge profile
+    let citizenProfile = profile || {};
+    if (req.user?.id && (!profile || !profile.annualIncome)) {
+      try {
+        const dbUser = await User.findById(req.user.id);
+        if (dbUser) {
+          citizenProfile = { ...dbUser.toSafeObject(), ...citizenProfile };
+        }
+      } catch (e) {
+        // proceed with supplied profile
+      }
+    }
 
-    res.status(200).json({
+    const aiResult = await generateCopilotResponse({
+      message: message.trim(),
+      profile: citizenProfile,
+      targetLanguage: targetLanguage || citizenProfile.nativeLanguage || 'English',
+      activeSchemeSlug,
+      history: history || [],
+      mode: mode || 'detailed',
+    });
+
+    return res.status(200).json({
       success: true,
-      response: responseText,
-      message: responseText
+      response: aiResult.response,
+      message: aiResult.response,
+      provider: aiResult.provider,
+      referencedScheme: aiResult.referencedScheme,
+      officialPortal: aiResult.officialPortal,
     });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Error generating AI response' });
+    console.error('askCopilot error:', error);
+    return res.status(500).json({
+      success: false,
+      code: 'COPILOT_ERROR',
+      message: 'AI advisor temporarily unavailable. Please retry your question.',
+    });
   }
 };
 
 export const chatWithCopilot = async (req, res) => {
-  try {
-    const { message, profile, targetLanguage, mode } = req.body;
-
-    if (!message) {
-      return res.status(400).json({ error: 'Message is required' });
-    }
-
-    const responseText = generateSovereignResponse(
-      message,
-      profile || {},
-      targetLanguage || 'Tamil',
-      mode || 'detailed'
-    );
-
-    res.status(200).json({
-      success: true,
-      response: responseText,
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message || 'Error generating AI response' });
-  }
+  // Alias to askCopilot
+  return askCopilot(req, res);
 };
 
 export const verifyLink = async (req, res) => {
   try {
     const { url } = req.body;
-    if (!url) {
-      return res.status(400).json({ error: 'URL is required' });
+    if (!url || typeof url !== 'string') {
+      return res.status(400).json({
+        success: false,
+        code: 'MISSING_URL',
+        message: 'URL is required for verification.',
+      });
     }
 
     let parsedDomain = '';
@@ -61,15 +74,15 @@ export const verifyLink = async (req, res) => {
       const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
       parsedDomain = parsed.hostname.toLowerCase();
     } catch {
-      parsedDomain = url.toLowerCase();
+      parsedDomain = url.toLowerCase().trim();
     }
 
     const isOfficialGov =
       parsedDomain.endsWith('.gov.in') ||
       parsedDomain.endsWith('.nic.in') ||
-      parsedDomain.endsWith('.tn.gov.in') ||
       parsedDomain.endsWith('.mygov.in') ||
-      parsedDomain.endsWith('.digitalindia.gov.in');
+      parsedDomain.endsWith('.digitalindia.gov.in') ||
+      parsedDomain.endsWith('.ac.in');
 
     const suspiciousKeywords = [
       'free-money',
@@ -79,7 +92,7 @@ export const verifyLink = async (req, res) => {
       'lottery',
       'win-cash',
       'modi-subsidy-link',
-      'instant-loan-approval'
+      'instant-loan-approval',
     ];
 
     const isSuspicious =
@@ -107,17 +120,23 @@ export const verifyLink = async (req, res) => {
       analysisMessage = 'WARNING: High probability phishing/scam scheme link. Do NOT provide personal details or pay any fee.';
     }
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       url,
       domain: parsedDomain,
       isOfficialGov,
       safetyStatus,
       riskScore,
       analysisMessage,
-      recommendedOfficialPortal: isOfficialGov ? url : 'https://www.myscheme.gov.in'
+      recommendedOfficialPortal: isOfficialGov ? url : 'https://www.myscheme.gov.in',
     });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to verify URL' });
+    console.error('verifyLink error:', error);
+    return res.status(500).json({
+      success: false,
+      code: 'VERIFY_ERROR',
+      message: 'Failed to verify URL.',
+    });
   }
 };
 
@@ -126,7 +145,11 @@ export const auditDocument = async (req, res) => {
     const { imageBase64, documentType } = req.body;
 
     if (!imageBase64) {
-      return res.status(400).json({ error: 'Document data is required' });
+      return res.status(400).json({
+        success: false,
+        code: 'MISSING_DOCUMENT',
+        message: 'Document base64 data is required.',
+      });
     }
 
     const sizeInBytes = Math.round((imageBase64.length * 3) / 4);
@@ -135,7 +158,8 @@ export const auditDocument = async (req, res) => {
     const isUnder100KB = sizeInKB <= 120;
     const clarityScore = isUnder100KB ? 94 : 88;
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       documentType: documentType || 'Identity Certificate',
       originalSizeBytes: sizeInBytes,
       sizeInKB,
@@ -144,9 +168,14 @@ export const auditDocument = async (req, res) => {
       recommendation: isUnder100KB
         ? 'Document is optimal for official government portal upload (< 100 KB).'
         : `Current size is ${sizeInKB} KB. Compress to under 100 KB before uploading to prevent portal rejection.`,
-      compressionSuggested: !isUnder100KB
+      compressionSuggested: !isUnder100KB,
     });
   } catch (error) {
-    res.status(500).json({ error: error.message || 'Failed to audit document' });
+    console.error('auditDocument error:', error);
+    return res.status(500).json({
+      success: false,
+      code: 'AUDIT_ERROR',
+      message: 'Failed to audit document.',
+    });
   }
 };

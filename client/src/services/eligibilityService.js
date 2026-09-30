@@ -1,7 +1,13 @@
-import api from './api.js';
+import api from './api';
 
 export const eligibilityService = {
-  getEligibleSchemes: () => api.get('/api/eligibility/schemes'),
-  
-  getEligibilitySummary: () => api.get('/api/eligibility/summary'),
+  getEligibleSchemes: async () => {
+    const res = await api.get('/api/eligibility/schemes');
+    return res.data;
+  },
+
+  getEligibilitySummary: async () => {
+    const res = await api.get('/api/eligibility/summary');
+    return res.data;
+  },
 };

@@ -34,13 +34,14 @@ export const CopilotPage = ({
   setSelectedLanguage,
   initialSchemeContext,
   onClearSchemeContext,
-  onSaveToDigiLocker
+  onSaveToDigiLocker,
+  initialQuery = '',
 }) => {
   const [activeSubTab, setActiveSubTab] = useState('chat');
   
   // Chat & Conversation States
   const [messages, setMessages] = useState([]);
-  const [inputQuery, setInputQuery] = useState('');
+  const [inputQuery, setInputQuery] = useState(initialQuery || '');
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
@@ -316,9 +317,13 @@ Select a quick topic below or ask your question:`;
     setIsAiLoading(true);
 
     try {
+      const token = localStorage.getItem('vynora_token');
       const response = await fetch('/api/copilot/chat', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({
           message: query,
           profile: userProfile,
@@ -359,6 +364,15 @@ Select a quick topic below or ask your question:`;
       setIsAiLoading(false);
     }
   };
+
+  // Trigger initial query if passed via URL parameters
+  const initialQueryHandledRef = useRef(false);
+  useEffect(() => {
+    if (initialQuery && initialQuery.trim() && !initialQueryHandledRef.current) {
+      initialQueryHandledRef.current = true;
+      handleSendMessage(initialQuery.trim());
+    }
+  }, [initialQuery]);
 
   // Text-To-Speech audio synthesizer for accessible citizen voice assistance
   const handleReadAloud = (text) => {
@@ -803,12 +817,12 @@ Select a quick topic below or ask your question:`;
                 <div className="flex justify-between py-1.5 border-b border-slate-100">
                   <span className="text-slate-500">Annual Income:</span>
                   <span className="font-bold text-emerald-700">
-                    ₹{userProfile?.salary ? Number(userProfile.salary).toLocaleString('en-IN') : '2,40,000'}/yr
+                    ₹{(userProfile?.annualIncome !== undefined ? Number(userProfile.annualIncome) : (userProfile?.salary ? Number(userProfile.salary) : 240000)).toLocaleString('en-IN')}/yr
                   </span>
                 </div>
                 <div className="flex justify-between py-1.5 border-b border-slate-100">
                   <span className="text-slate-500">Housing:</span>
-                  <span className="capitalize font-medium text-slate-700">{userProfile?.houseType === 'rental' ? 'Rental / வாடகை' : 'Owned / சொந்த'}</span>
+                  <span className="capitalize font-medium text-slate-700">{userProfile?.houseType || 'Rental'}</span>
                 </div>
                 <div className="flex justify-between py-1.5 border-b border-slate-100">
                   <span className="text-slate-500">State:</span>
@@ -816,7 +830,7 @@ Select a quick topic below or ask your question:`;
                 </div>
                 <div className="flex justify-between py-1.5">
                   <span className="text-slate-500">Occupation:</span>
-                  <span className="capitalize font-medium text-slate-700">{userProfile?.employmentStatus?.replace('_', ' ') || 'Student'}</span>
+                  <span className="capitalize font-medium text-slate-700">{userProfile?.occupationStatus || userProfile?.employmentStatus?.replace('_', ' ') || 'Citizen'}</span>
                 </div>
               </div>
             </div>

@@ -1,291 +1,246 @@
-import React, { createContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useState, useEffect, useCallback } from 'react';
+import { authService } from '../services/authService';
 
 export const AuthContext = createContext();
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
-
-// Default citizen profile for seamless instant access & high eligibility matching
-export const DEFAULT_CITIZEN_PROFILE = {
-  name: 'Ramesh Kumar',
-  email: 'ramesh.kumar@citizen.gov.in',
-  salary: 240000,
-  houseType: 'rental', // 'rental', 'owned', 'kutcha', 'homeless'
-  employmentStatus: 'student', // 'student', 'unemployed', 'working_private', 'working_govt', 'working_self_employed', 'farmer', 'artisan'
-  category: 'OBC', // 'General', 'OBC', 'SC', 'ST', 'EWS'
-  gender: 'male',
-  address: 'Anna Nagar, Chennai, Tamil Nadu - 600040',
-  state: 'Tamil Nadu',
-  nativeLanguage: 'English',
-  educationStream: 'engineering',
-  isProfileComplete: true,
+export const AUTH_STATUS = {
+  UNKNOWN: 'UNKNOWN',
+  UNAUTHENTICATED: 'UNAUTHENTICATED',
+  AUTHENTICATED_PROFILE_INCOMPLETE: 'AUTHENTICATED_PROFILE_INCOMPLETE',
+  AUTHENTICATED_PROFILE_COMPLETE: 'AUTHENTICATED_PROFILE_COMPLETE',
 };
 
-// Initial verified DigiLocker documents
-const INITIAL_DOCUMENTS = [
-  {
-    id: 'doc-aadhaar-01',
-    name: 'Aadhaar_Card_UIDAI_Verified',
-    category: 'Aadhaar Card',
-    fileType: 'image/jpeg',
-    originalSizeBytes: 84500, // 84.5 KB - portal ready
-    dataUrl: '',
-    uploadedAt: '24/08/2026',
-    verified: true,
-    notes: 'Aadhaar linked to active mobile & NPCI DBT map'
-  },
-  {
-    id: 'doc-income-02',
-    name: 'Tahsildar_Income_Certificate_2026',
-    category: 'Income Certificate',
-    fileType: 'image/jpeg',
-    originalSizeBytes: 96200, // 96.2 KB
-    dataUrl: '',
-    uploadedAt: '25/08/2026',
-    verified: true,
-    notes: 'Annual income certified under ₹2.5 Lakhs'
-  },
-  {
-    id: 'doc-marksheet-03',
-    name: 'HSC_PlusTwo_Marksheet',
-    category: 'Academic Marksheet',
-    fileType: 'image/jpeg',
-    originalSizeBytes: 78000,
-    dataUrl: '',
-    uploadedAt: '26/08/2026',
-    verified: true,
-    notes: 'Verified for NSP & PM Internship Scheme'
-  }
-];
-
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(() => {
-    const savedProfile = localStorage.getItem('citizen_profile');
-    if (savedProfile) {
-      try {
-        return JSON.parse(savedProfile);
-      } catch (e) {
-        console.warn('Failed to parse citizen profile:', e);
-      }
-    }
-    return DEFAULT_CITIZEN_PROFILE;
+  const [token, setToken] = useState(() => localStorage.getItem('vynora_token'));
+  const [user, setUser] = useState(null);
+  const [authStatus, setAuthStatus] = useState(AUTH_STATUS.UNKNOWN);
+  const [loading, setLoading] = useState(true);
+
+  // Language preference
+  const [selectedLanguage, setSelectedLanguageState] = useState(() => {
+    return localStorage.getItem('vynora_lang') || 'English';
   });
 
-  const [token, setToken] = useState(() => localStorage.getItem('authToken') || 'guest_citizen_token');
-  const [loading, setLoading] = useState(false);
-  const [selectedLanguage, setSelectedLanguage] = useState(() => localStorage.getItem('VYNORA_lang') || 'English');
-  const [activeTab, setActiveTab] = useState('schemes'); // 'schemes', 'copilot', 'courses', 'internships', 'digilocker'
-  const [copilotContextScheme, setCopilotContextScheme] = useState(null);
+  const setSelectedLanguage = useCallback((lang) => {
+    setSelectedLanguageState(lang);
+    localStorage.setItem('vynora_lang', lang);
+  }, []);
 
-  // DigiLocker Documents Vault State
+  // DigiLocker Documents Vault (Clean client state, real status tracking)
   const [documents, setDocuments] = useState(() => {
-    const savedDocs = localStorage.getItem('digilocker_docs');
-    if (savedDocs) {
-      try {
-        return JSON.parse(savedDocs);
-      } catch (e) {
-        console.warn('Failed to parse digilocker docs:', e);
-      }
+    try {
+      const saved = localStorage.getItem('vynora_user_docs');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
     }
-    return INITIAL_DOCUMENTS;
   });
 
-  // Internship Reminders State
-  const [reminders, setReminders] = useState(() => {
-    const savedReminders = localStorage.getItem('internship_reminders');
-    if (savedReminders) {
-      try {
-        return JSON.parse(savedReminders);
-      } catch (e) {
-        console.warn('Failed to parse reminders:', e);
-      }
-    }
-    return [
-      {
-        internshipId: 'pm-internship-scheme-2026',
-        internshipTitle: 'Prime Minister Internship Scheme (PMIS) - Corporate Ministry',
-        reminderDate: '2026-09-10',
-        notifyEmail: true,
-        notes: 'Submit Dean recommendation letter and Aadhaar e-KYC',
-        active: true
-      }
-    ];
-  });
-
-  // Persist Documents to localStorage
   useEffect(() => {
     try {
-      localStorage.setItem('digilocker_docs', JSON.stringify(documents));
+      localStorage.setItem('vynora_user_docs', JSON.stringify(documents));
     } catch (e) {
-      console.warn('Could not save docs to localStorage', e);
+      console.warn('Failed to save documents to localStorage:', e);
     }
   }, [documents]);
 
-  // Persist Reminders to localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem('internship_reminders', JSON.stringify(reminders));
-    } catch (e) {
-      console.warn('Could not save reminders to localStorage', e);
-    }
-  }, [reminders]);
-
-  // Persist Selected Language
-  useEffect(() => {
-    try {
-      localStorage.setItem('VYNORA_lang', selectedLanguage);
-    } catch (e) {
-      console.warn('Could not save language to localStorage', e);
-    }
-  }, [selectedLanguage]);
-
-  // Persist Citizen Profile
-  const updateCitizenProfile = useCallback((updatedData) => {
-    setUser((prev) => {
-      const merged = {
-        ...(prev || DEFAULT_CITIZEN_PROFILE),
-        ...updatedData,
-        isProfileComplete: true
-      };
-      try {
-        localStorage.setItem('citizen_profile', JSON.stringify(merged));
-      } catch (e) {
-        console.warn('Could not save profile to localStorage', e);
-      }
-      return merged;
-    });
-  }, []);
-
-  const addDocument = useCallback((newDoc) => {
-    setDocuments((prev) => [newDoc, ...prev]);
+  const addDocument = useCallback((doc) => {
+    setDocuments((prev) => [doc, ...prev]);
   }, []);
 
   const deleteDocument = useCallback((docId) => {
     setDocuments((prev) => prev.filter((d) => d.id !== docId));
   }, []);
 
-  const toggleReminder = useCallback((reminderObj) => {
+  // Internship reminders state
+  const [reminders, setReminders] = useState(() => {
+    try {
+      const saved = localStorage.getItem('vynora_reminders');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('vynora_reminders', JSON.stringify(reminders));
+    } catch (e) {
+      console.warn('Failed to save reminders:', e);
+    }
+  }, [reminders]);
+
+  const toggleReminder = useCallback((reminderItem) => {
     setReminders((prev) => {
-      const index = prev.findIndex((r) => r.internshipId === reminderObj.internshipId);
-      if (index >= 0) {
-        const updated = [...prev];
-        updated[index] = { ...updated[index], ...reminderObj };
-        return updated;
+      const exists = prev.find((r) => r.internshipId === reminderItem.internshipId);
+      if (exists) {
+        return prev.filter((r) => r.internshipId !== reminderItem.internshipId);
       }
-      return [reminderObj, ...prev];
+      return [reminderItem, ...prev];
     });
   }, []);
 
-  // Quick Copilot Navigation with Pre-filled Scheme
-  const askCopilotAboutScheme = useCallback((scheme) => {
-    setCopilotContextScheme(scheme);
-    setActiveTab('copilot');
-  }, []);
+  // Initialize and verify authentication on startup
+  const initAuth = useCallback(async () => {
+    const storedToken = localStorage.getItem('vynora_token');
+    if (!storedToken) {
+      setToken(null);
+      setUser(null);
+      setAuthStatus(AUTH_STATUS.UNAUTHENTICATED);
+      setLoading(false);
+      return;
+    }
 
-  const clearCopilotContext = useCallback(() => {
-    setCopilotContextScheme(null);
-  }, []);
+    try {
+      const data = await authService.getMe();
+      if (data?.user) {
+        setUser(data.user);
+        setToken(storedToken);
+        const isComplete = Boolean(data.user.profileCompleted);
+        setAuthStatus(
+          isComplete
+            ? AUTH_STATUS.AUTHENTICATED_PROFILE_COMPLETE
+            : AUTH_STATUS.AUTHENTICATED_PROFILE_INCOMPLETE
+        );
+        if (data.user.nativeLanguage) {
+          setSelectedLanguage(data.user.nativeLanguage);
+        }
+      } else {
+        throw new Error('User not found');
+      }
+    } catch (err) {
+      console.warn('Session verification failed, logging out:', err.message);
+      localStorage.removeItem('vynora_token');
+      setToken(null);
+      setUser(null);
+      setAuthStatus(AUTH_STATUS.UNAUTHENTICATED);
+    } finally {
+      setLoading(false);
+    }
+  }, [setSelectedLanguage]);
 
+  useEffect(() => {
+    initAuth();
+
+    // Listen for unauthorized 401 events from Axios interceptor
+    const handleUnauthorized = () => {
+      localStorage.removeItem('vynora_token');
+      setToken(null);
+      setUser(null);
+      setAuthStatus(AUTH_STATUS.UNAUTHENTICATED);
+    };
+
+    window.addEventListener('vynora:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('vynora:unauthorized', handleUnauthorized);
+  }, [initAuth]);
+
+  // Login action
   const login = useCallback(async (usernameOrEmail, password) => {
-    try {
-      const endpoint = API_BASE ? `${API_BASE}/api/auth/login` : '/api/auth/login';
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ usernameOrEmail, password }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.error || 'Login failed');
-      }
-
-      const data = await response.json();
-      setToken(data.token || 'user_token');
-      if (data.user) {
-        updateCitizenProfile(data.user);
-      }
-      if (data.token) {
-        localStorage.setItem('authToken', data.token);
-      }
-      return data;
-    } catch (error) {
-      // Local fallback for smooth experience
-      const demoUser = {
-        ...DEFAULT_CITIZEN_PROFILE,
-        name: usernameOrEmail.split('@')[0] || 'Citizen',
-        email: usernameOrEmail.includes('@') ? usernameOrEmail : `${usernameOrEmail}@citizen.gov.in`,
-      };
-      setToken('demo_token');
-      localStorage.setItem('authToken', 'demo_token');
-      updateCitizenProfile(demoUser);
-      return { token: 'demo_token', user: demoUser };
+    const data = await authService.login({ usernameOrEmail, password });
+    if (!data.token || !data.user) {
+      throw new Error('Invalid login response from server.');
     }
-  }, [updateCitizenProfile]);
 
+    localStorage.setItem('vynora_token', data.token);
+    setToken(data.token);
+    setUser(data.user);
+
+    const isComplete = Boolean(data.user.profileCompleted);
+    setAuthStatus(
+      isComplete
+        ? AUTH_STATUS.AUTHENTICATED_PROFILE_COMPLETE
+        : AUTH_STATUS.AUTHENTICATED_PROFILE_INCOMPLETE
+    );
+
+    if (data.user.nativeLanguage) {
+      setSelectedLanguage(data.user.nativeLanguage);
+    }
+
+    return data;
+  }, [setSelectedLanguage]);
+
+  // Register action
   const register = useCallback(async (email, username, password, confirmPassword, name) => {
-    try {
-      const endpoint = API_BASE ? `${API_BASE}/api/auth/register` : '/api/auth/register';
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, username, password, confirmPassword, name }),
-      });
+    const data = await authService.register({
+      email,
+      username,
+      password,
+      confirmPassword,
+      name,
+    });
 
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.error || 'Registration failed');
-      }
-
-      const data = await response.json();
-      setToken(data.token || 'user_token');
-      if (data.user) {
-        updateCitizenProfile(data.user);
-      }
-      if (data.token) {
-        localStorage.setItem('authToken', data.token);
-      }
-      return data;
-    } catch (error) {
-      const newUser = {
-        ...DEFAULT_CITIZEN_PROFILE,
-        name: name || username || 'Citizen',
-        email: email || 'citizen@gov.in',
-      };
-      setToken('demo_token');
-      localStorage.setItem('authToken', 'demo_token');
-      updateCitizenProfile(newUser);
-      return { token: 'demo_token', user: newUser };
+    if (!data.token || !data.user) {
+      throw new Error('Invalid registration response from server.');
     }
-  }, [updateCitizenProfile]);
 
-  const logout = useCallback(() => {
-    setToken(null);
-    localStorage.removeItem('authToken');
+    localStorage.setItem('vynora_token', data.token);
+    setToken(data.token);
+    setUser(data.user);
+
+    // Newly registered user always has incomplete profile
+    setAuthStatus(AUTH_STATUS.AUTHENTICATED_PROFILE_INCOMPLETE);
+
+    return data;
   }, []);
+
+  // Logout action
+  const logout = useCallback(() => {
+    localStorage.removeItem('vynora_token');
+    localStorage.removeItem('vynora_questionnaire_draft');
+    setToken(null);
+    setUser(null);
+    setAuthStatus(AUTH_STATUS.UNAUTHENTICATED);
+  }, []);
+
+  // Update local user state after questionnaire or profile edit
+  const setUserFromProfileUpdate = useCallback((updatedUser) => {
+    if (!updatedUser) return;
+    setUser(updatedUser);
+    const isComplete = Boolean(updatedUser.profileCompleted);
+    setAuthStatus(
+      isComplete
+        ? AUTH_STATUS.AUTHENTICATED_PROFILE_COMPLETE
+        : AUTH_STATUS.AUTHENTICATED_PROFILE_INCOMPLETE
+    );
+    if (updatedUser.nativeLanguage) {
+      setSelectedLanguage(updatedUser.nativeLanguage);
+    }
+  }, [setSelectedLanguage]);
+
+  // Refresh user data from server
+  const refreshUser = useCallback(async () => {
+    try {
+      const data = await authService.getMe();
+      if (data?.user) {
+        setUserFromProfileUpdate(data.user);
+      }
+    } catch (e) {
+      console.warn('Failed to refresh user:', e.message);
+    }
+  }, [setUserFromProfileUpdate]);
 
   const value = {
     user,
     token,
+    authStatus,
     loading,
+    isAuthenticated:
+      authStatus === AUTH_STATUS.AUTHENTICATED_PROFILE_COMPLETE ||
+      authStatus === AUTH_STATUS.AUTHENTICATED_PROFILE_INCOMPLETE,
+    isProfileComplete: authStatus === AUTH_STATUS.AUTHENTICATED_PROFILE_COMPLETE,
     selectedLanguage,
     setSelectedLanguage,
-    activeTab,
-    setActiveTab,
-    copilotContextScheme,
-    askCopilotAboutScheme,
-    clearCopilotContext,
+    login,
+    register,
+    logout,
+    refreshUser,
+    setUserFromProfileUpdate,
     documents,
     addDocument,
     deleteDocument,
     reminders,
     toggleReminder,
-    updateCitizenProfile,
-    register,
-    login,
-    logout,
-    isAuthenticated: true, // Allow citizens instant frictionless access to all public schemes & tools
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
-

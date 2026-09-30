@@ -1,67 +1,89 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import User from '../models/User.js';
 import Scheme from '../models/Scheme.js';
+import { SCHEMES_DATABASE } from '../data/schemesData.js';
+import { calculateEligibility } from '../services/eligibilityService.js';
 
 dotenv.config();
 
-const schemes = [
-  {
-    title: 'Pradhan Mantri Awas Yojana',
-    description: 'Housing scheme for all',
-    category: 'Housing',
-    states: ['Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal'],
-    targetGroups: ['Low Income', 'Middle Income'],
-    incomeCriteria: { min: 0, max: 1800000 },
-    genderCriteria: ['Male', 'Female', 'Other'],
-    communityCriteria: ['General', 'OBC', 'SC', 'ST'],
-    occupationCriteria: ['Student', 'Working Professional', 'Self-employed', 'Unemployed'],
-    houseCriteria: ['Owned', 'Rental'],
-    ageCriteria: { min: 18, max: 100 },
-    requiredDocuments: ['Aadhar', 'Bank Account', 'Income Certificate'],
-    applicationProcess: 'Online through official portal',
-    officialLink: 'https://pmaymis.gov.in',
-    deadline: '2024-12-31',
-    benefits: 'Home loan subsidy up to Rs. 2.67 lakhs',
-  },
-  {
-    title: 'Jan Dhan Yojana',
-    description: 'Financial inclusion scheme',
-    category: 'Banking',
-    states: ['Andhra Pradesh', 'Arunachal Pradesh', 'Assam', 'Bihar', 'Chhattisgarh', 'Goa', 'Gujarat', 'Haryana', 'Himachal Pradesh', 'Jharkhand', 'Karnataka', 'Kerala', 'Madhya Pradesh', 'Maharashtra', 'Manipur', 'Meghalaya', 'Mizoram', 'Nagaland', 'Odisha', 'Punjab', 'Rajasthan', 'Sikkim', 'Tamil Nadu', 'Telangana', 'Tripura', 'Uttar Pradesh', 'Uttarakhand', 'West Bengal'],
-    targetGroups: ['All'],
-    incomeCriteria: { min: 0, max: 10000000 },
-    genderCriteria: ['Male', 'Female', 'Other'],
-    communityCriteria: ['General', 'OBC', 'SC', 'ST'],
-    occupationCriteria: ['Student', 'Working Professional', 'Self-employed', 'Unemployed', 'Retired'],
-    houseCriteria: ['Owned', 'Rental'],
-    ageCriteria: { min: 18, max: 100 },
-    requiredDocuments: ['Aadhar', 'Voter ID'],
-    applicationProcess: 'Offline at nearest bank branch',
-    officialLink: 'https://pmjdy.gov.in',
-    deadline: null,
-    benefits: 'Zero balance bank account with insurance benefits',
-  },
-];
-
-const seedDatabase = async () => {
+export const seedDemoUser = async () => {
   try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log('Connected to MongoDB');
-
-    // Clear existing schemes
-    await Scheme.deleteMany({});
-    console.log('Cleared existing schemes');
-
-    // Insert sample schemes
-    const inserted = await Scheme.insertMany(schemes);
-    console.log(`Inserted ${inserted.length} schemes`);
-
-    console.log('Database seeding completed!');
-    process.exit(0);
+    let demoUser = await User.findOne({ username: 'demo_citizen' });
+    if (!demoUser) {
+      demoUser = await User.create({
+        name: 'Ramesh Patel',
+        email: 'demo@vynora.gov.in',
+        username: 'demo_citizen',
+        password: 'DemoCitizen123!',
+        annualIncome: 180000,
+        houseType: 'Kutcha',
+        gender: 'Male',
+        address: '42, Panchayat Union Road',
+        state: 'Tamil Nadu',
+        district: 'Salem',
+        pincode: '636001',
+        nativeLanguage: 'English',
+        community: 'OBC',
+        occupationStatus: 'Farmer',
+        profileCompleted: true,
+      });
+      console.log('✅ Demo citizen created: demo_citizen / DemoCitizen123!');
+    }
+    await calculateEligibility(demoUser._id);
   } catch (error) {
-    console.error('Error seeding database:', error);
-    process.exit(1);
+    console.warn('Notice seeding demo citizen:', error.message);
   }
 };
 
-seedDatabase();
+export const seedDatabase = async () => {
+  try {
+    const mongoUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/govt-schemes';
+    await mongoose.connect(mongoUri);
+    console.log('Connected to MongoDB for scheme seeding');
+
+    // Transform and map to model
+    const docs = SCHEMES_DATABASE.map((s) => ({
+      slug: s.id,
+      title: s.title,
+      shortDescription: s.shortDescription || '',
+      category: s.category || 'General Welfare',
+      ministry: s.ministry || '',
+      benefitAmount: s.benefitAmount || '',
+      benefitType: s.benefitType || 'Direct Benefit Transfer',
+      targetAudience: s.targetAudience || '',
+      eligibilityCriteria: {
+        maxIncome: s.eligibilityCriteria?.maxIncome ?? null,
+        minIncome: s.eligibilityCriteria?.minIncome ?? null,
+        houseTypes: s.eligibilityCriteria?.houseTypes || [],
+        employmentStatuses: s.eligibilityCriteria?.employmentStatuses || [],
+        categories: s.eligibilityCriteria?.categories || [],
+        states: s.eligibilityCriteria?.states || ['All India'],
+        genders: s.eligibilityCriteria?.genders || [],
+        minAge: s.eligibilityCriteria?.minAge ?? null,
+        maxAge: s.eligibilityCriteria?.maxAge ?? null,
+      },
+      requiredDocuments: s.requiredDocuments || [],
+      applicationUrl: s.applicationUrl || '',
+      officialPortal: s.officialPortal || '',
+      tags: s.tags || [],
+      lastVerifiedAt: new Date(),
+    }));
+
+    // Clear existing schemes and insert fresh verified records
+    await Scheme.deleteMany({});
+    const inserted = await Scheme.insertMany(docs);
+    console.log(`✅ Successfully seeded ${inserted.length} verified government schemes into MongoDB!`);
+    return inserted.length;
+  } catch (error) {
+    console.error('❌ Error seeding database:', error.message);
+    throw error;
+  }
+};
+
+// If run directly via CLI
+if (process.argv[1]?.includes('seedSchemes.js')) {
+  seedDatabase()
+    .then(() => process.exit(0))
+    .catch(() => process.exit(1));
+}
